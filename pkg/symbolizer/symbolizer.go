@@ -5,6 +5,7 @@
 
 package symbolizer
 
+// 提供用于处理反馈信号的类型。
 import (
 	"bufio"
 	"bytes"

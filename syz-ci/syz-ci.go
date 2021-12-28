@@ -7,6 +7,8 @@
 // For usage instructions see: docs/ci.md.
 package main
 
+import "flag"
+
 // Implementation details:
 //
 // 2 main components:
@@ -50,6 +52,8 @@ package main
 // Tag files uniquely identify the build (git hash, compiler identity, kernel config, etc).
 // For tag files both contents and modification time are important,
 // modification time allows us to understand if we need to rebuild after a restart.
+
+//持续运行syzkaller的系统
 
 import (
 	"encoding/json"

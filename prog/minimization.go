@@ -11,9 +11,11 @@ import (
 // predicate pred. It iteratively generates simpler programs and asks pred
 // whether it is equal to the original program or not. If it is equivalent then
 // the simplification attempt is committed and the process continues.
+// 最小化程序并加入语料库
 func Minimize(p0 *Prog, callIndex0 int, crash bool, pred0 func(*Prog, int) bool) (*Prog, int) {
 	pred := func(p *Prog, callIndex int) bool {
-		p.sanitizeFix()
+		//sanitizeFix对某些系统调用做一些特殊的处理
+		p.sanitizeFix() //有些疑惑？ 老版本会对ioctl syslog mremap 等调用进行特殊处理
 		p.debugValidate()
 		return pred0(p, callIndex)
 	}
@@ -26,9 +28,11 @@ func Minimize(p0 *Prog, callIndex0 int, crash bool, pred0 func(*Prog, int) bool)
 	}
 
 	// Try to remove all calls except the last one one-by-one.
+	//尝试去一个一个移除系统调用 除了最后一个
 	p0, callIndex0 = removeCalls(p0, callIndex0, crash, pred)
 
 	// Try to minimize individual calls.
+	//尝试最小化单独的调用，移除无关的参数
 	for i := 0; i < len(p0.Calls); i++ {
 		ctx := &minimizeArgsCtx{
 			target:     p0.Target,
@@ -42,6 +46,7 @@ func Minimize(p0 *Prog, callIndex0 int, crash bool, pred0 func(*Prog, int) bool)
 		ctx.p = p0.Clone()
 		ctx.call = ctx.p.Calls[i]
 		for j, field := range ctx.call.Meta.Args {
+			//do中根据不同的参数类型调用不同的minimize函数
 			if ctx.do(ctx.call.Args[j], field.Name, "") {
 				goto again
 			}
@@ -110,6 +115,7 @@ func (ctx *minimizeArgsCtx) do(arg Arg, field, path string) bool {
 		return false
 	}
 	p0 := *ctx.p0
+	//根据参数类型调用minimize函数
 	if arg.Type().minimize(ctx, arg, path) {
 		return true
 	}
@@ -147,12 +153,14 @@ func (typ *UnionType) minimize(ctx *minimizeArgsCtx, arg Arg, path string) bool 
 	return ctx.do(a.Option, typ.Fields[a.Index].Name, path)
 }
 
+//指针
 func (typ *PtrType) minimize(ctx *minimizeArgsCtx, arg Arg, path string) bool {
 	a := arg.(*PointerArg)
 	if a.Res == nil {
 		return false
 	}
 	if path1 := path + ">"; !ctx.triedPaths[path1] {
+		//把指针置为空或者将指针指向的的内容置空
 		removeArg(a.Res)
 		replaceArg(a, MakeSpecialPointerArg(a.Type(), a.Dir(), 0))
 		ctx.target.assignSizesCall(ctx.call)
@@ -171,6 +179,7 @@ func (typ *ArrayType) minimize(ctx *minimizeArgsCtx, arg Arg, path string) bool 
 		elem := a.Inner[i]
 		elemPath := fmt.Sprintf("%v-%v", path, i)
 		// Try to remove individual elements one-by-one.
+		// 尝试一个一个移除数组的元素
 		if !ctx.crash && !ctx.triedPaths[elemPath] &&
 			(typ.Kind == ArrayRandLen ||
 				typ.Kind == ArrayRangeLen && uint64(len(a.Inner)) > typ.RangeBegin) {

@@ -3,6 +3,7 @@
 
 package ifuzz
 
+//生成和变异x86机器代码
 import (
 	"math/rand"
 

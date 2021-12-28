@@ -27,48 +27,50 @@ import (
 type EnvFlags uint64
 
 // Note: New / changed flags should be added to parse_env_flags in executor.cc.
+//应该将更改的标志添加到exector.cc的parse_env_flags 中
 const (
-	FlagDebug               EnvFlags = 1 << iota // debug output from executor
-	FlagSignal                                   // collect feedback signals (coverage)
-	FlagSandboxSetuid                            // impersonate nobody user
-	FlagSandboxNamespace                         // use namespaces for sandboxing
-	FlagSandboxAndroid                           // use Android sandboxing for the untrusted_app domain
-	FlagExtraCover                               // collect extra coverage
-	FlagEnableTun                                // setup and use /dev/tun for packet injection
-	FlagEnableNetDev                             // setup more network devices for testing
-	FlagEnableNetReset                           // reset network namespace between programs
-	FlagEnableCgroups                            // setup cgroups for testing
-	FlagEnableCloseFds                           // close fds after each program
-	FlagEnableDevlinkPCI                         // setup devlink PCI device
-	FlagEnableVhciInjection                      // setup and use /dev/vhci for hci packet injection
-	FlagEnableWifi                               // setup and use mac80211_hwsim for wifi emulation
+	FlagDebug               EnvFlags = 1 << iota // debug output from executor， debug标志
+	FlagSignal                                   // collect feedback signals (coverage)， 收集反馈标志
+	FlagSandboxSetuid                            // impersonate nobody user， 冒充无人用户
+	FlagSandboxNamespace                         // use namespaces for sandboxing，使用命名空间进行沙箱过程
+	FlagSandboxAndroid                           // use Android sandboxing for the untrusted_app domain，对不受信用的app域使用安卓沙箱
+	FlagExtraCover                               // collect extra coverage，收集额外的覆盖率
+	FlagEnableTun                                // setup and use /dev/tun for packet injection，为包注入安装/dev/tun（一个网络接口）
+	FlagEnableNetDev                             // setup more network devices for testing 为测试安装更多的网络设备
+	FlagEnableNetReset                           // reset network namespace between programs  重置程序之间的网络命名空间
+	FlagEnableCgroups                            // setup cgroups for testing  重置测试的cgroup
+	FlagEnableCloseFds                           // close fds after each program  在每个程序结束后关闭fds
+	FlagEnableDevlinkPCI                         // setup devlink PCI device 安装devlink PCI设备
+	FlagEnableVhciInjection                      // setup and use /dev/vhci for hci packet injection，为hci包注入安装并使用/dev/vhci
+	FlagEnableWifi                               // setup and use mac80211_hwsim for wifi emulation， 为wifi仿真安装并使用mac80211_hwsim
 )
 
 // Per-exec flags for ExecOpts.Flags.
 type ExecFlags uint64
 
 const (
-	FlagCollectCover         ExecFlags = 1 << iota // collect coverage
-	FlagDedupCover                                 // deduplicate coverage in executor
-	FlagCollectComps                               // collect KCOV comparisons
-	FlagThreaded                                   // use multiple threads to mitigate blocked syscalls
-	FlagCollide                                    // collide syscalls to provoke data races
-	FlagEnableCoverageFilter                       // setup and use bitmap to do coverage filter
+	FlagCollectCover         ExecFlags = 1 << iota // collect coverage ，收集覆盖率
+	FlagDedupCover                                 // deduplicate coverage in executor，消除重复的覆盖率
+	FlagCollectComps                               // collect KCOV comparisons 收集KCOV的比较
+	FlagThreaded                                   // use multiple threads to mitigate blocked syscalls， 使用多线程减轻阻塞的系统调用
+	FlagCollide                                    // collide syscalls to provoke data races， 碰撞系统调用以引发数据竞争
+	FlagEnableCoverageFilter                       // setup and use bitmap to do coverage filter， 设置并使用位图进行覆盖率筛选
 )
 
 type ExecOpts struct {
 	Flags ExecFlags
 }
 
-// Config is the configuration for Env.
+// Config is the configuration for Env. 环境的配置
 type Config struct {
 	// Path to executor binary.
+	// 执行器的二进制文件路径
 	Executor string
 
-	UseShmem      bool // use shared memory instead of pipes for communication
-	UseForkServer bool // use extended protocol with handshake
+	UseShmem      bool // use shared memory instead of pipes for communication, 使用共享内存替换通讯管道
+	UseForkServer bool // use extended protocol with handshake，使用带握手的扩展协议
 
-	// Flags are configuation flags, defined above.
+	// Flags are configuation flags, defined above。配置的flag
 	Flags EnvFlags
 
 	Timeouts targets.Timeouts
@@ -79,24 +81,25 @@ type CallFlags uint32
 const (
 	CallExecuted      CallFlags = 1 << iota // was started at all
 	CallFinished                            // finished executing (rather than blocked forever)
-	CallBlocked                             // finished but blocked during execution
-	CallFaultInjected                       // fault was injected into this call
+	CallBlocked                             // finished but blocked during execution，已完成除了在执行期间被阻止
+	CallFaultInjected                       // fault was injected into this call， 这个调用中插入了错误的东西
 )
 
 type CallInfo struct {
 	Flags  CallFlags
 	Signal []uint32 // feedback signal, filled if FlagSignal is set
 	Cover  []uint32 // per-call coverage, filled if FlagSignal is set and cover == true,
-	// if dedup == false, then cov effectively contains a trace, otherwise duplicates are removed
-	Comps prog.CompMap // per-call comparison operands
-	Errno int          // call errno (0 if the call was successful)
+	// if dedup == false, then cov effectively contains a trace, otherwise duplicates are removed，dedup = false,就会包含路径，否则重复的都被移除
+	Comps prog.CompMap // per-call comparison operands ,每个系统调用的比较操作数
+	Errno int          // call errno (0 if the call was successful)  成功返回0
 }
 
 type ProgInfo struct {
 	Calls []CallInfo
-	Extra CallInfo // stores Signal and Cover collected from background threads
+	Extra CallInfo // stores Signal and Cover collected from background threads,存储后台线程的Signal和Cover
 }
 
+//环境结构体，包含in，out，cmd，inFile，outFile，config等
 type Env struct {
 	in  []byte
 	out []byte
@@ -118,7 +121,7 @@ const (
 
 	statusFail = 67
 
-	// Comparison types masks taken from KCOV headers.
+	// Comparison types masks taken from KCOV headers. 从KCOV头中获取的比较类型掩码。
 	compSizeMask  = 6
 	compSize8     = 6
 	compConstMask = 1
@@ -126,6 +129,7 @@ const (
 	extraReplyIndex = 0xffffffff // uint32(-1)
 )
 
+//解析与沙箱相关的参数
 func SandboxToFlags(sandbox string) (EnvFlags, error) {
 	switch sandbox {
 	case "none":
@@ -141,6 +145,7 @@ func SandboxToFlags(sandbox string) (EnvFlags, error) {
 	}
 }
 
+//将与沙箱相关的参数转换为string表示
 func FlagsToSandbox(flags EnvFlags) string {
 	if flags&FlagSandboxSetuid != 0 {
 		return "setuid"
@@ -153,14 +158,18 @@ func FlagsToSandbox(flags EnvFlags) string {
 }
 
 func MakeEnv(config *Config, pid int) (*Env, error) {
+	//没有初始化timouts
 	if config.Timeouts.Slowdown == 0 || config.Timeouts.Scale == 0 ||
 		config.Timeouts.Syscall == 0 || config.Timeouts.Program == 0 {
 		return nil, fmt.Errorf("ipc.MakeEnv: uninitialized timeouts (%+v)", config.Timeouts)
 	}
+
 	var inf, outf *os.File
 	var inmem, outmem []byte
+	//如果配置了共享内存，没有共享内存直接创建slice，仅仅自己访问
 	if config.UseShmem {
 		var err error
+		//为输入创建一个临时文件，并映射到内存中，返回值分别为：f, mem:一个byte的slice, err， 大小为4K
 		inf, inmem, err = osutil.CreateMemMappedFile(prog.ExecBufferSize)
 		if err != nil {
 			return nil, err
@@ -170,6 +179,7 @@ func MakeEnv(config *Config, pid int) (*Env, error) {
 				osutil.CloseMemMappedFile(inf, inmem)
 			}
 		}()
+		//为输出创建一个临时文件，并映射到内存中，返回值分别为：f, mem:一个byte的slice, err， 大小为16K
 		outf, outmem, err = osutil.CreateMemMappedFile(outputSize)
 		if err != nil {
 			return nil, err
@@ -195,22 +205,24 @@ func MakeEnv(config *Config, pid int) (*Env, error) {
 	if len(env.bin) == 0 {
 		return nil, fmt.Errorf("binary is empty string")
 	}
-	env.bin[0] = osutil.Abs(env.bin[0]) // we are going to chdir
+	env.bin[0] = osutil.Abs(env.bin[0]) // we are going to chdir， 尝试通过bin的参数改变当前目录，将pid号教导binary的末尾
 	// Append pid to binary name.
 	// E.g. if binary is 'syz-executor' and pid=15,
 	// we create a link from 'syz-executor.15' to 'syz-executor' and use 'syz-executor.15' as binary.
 	// This allows to easily identify program that lead to a crash in the log.
 	// Log contains pid in "executing program 15" and crashes usually contain "Comm: syz-executor.15".
+	//通过增加pid能够更好的在日志中识别由哪个executor导致的crash
 	// Note: pkg/report knowns about this and converts "syz-executor.15" back to "syz-executor".
-	base := filepath.Base(env.bin[0])
+	base := filepath.Base(env.bin[0]) //base就是根目路
 	pidStr := fmt.Sprintf(".%v", pid)
+	//简单的修剪大小，只要后半截
 	const maxLen = 16 // TASK_COMM_LEN is currently set to 16
 	if len(base)+len(pidStr) >= maxLen {
 		// Remove beginning of file name, in tests temp files have unique numbers at the end.
 		base = base[len(base)+len(pidStr)-maxLen+1:]
 	}
-	binCopy := filepath.Join(filepath.Dir(env.bin[0]), base+pidStr)
-	if err := os.Link(env.bin[0], binCopy); err == nil {
+	binCopy := filepath.Join(filepath.Dir(env.bin[0]), base+pidStr) //复制一份bin
+	if err := os.Link(env.bin[0], binCopy); err == nil {            //创建一份软连接
 		env.bin[0] = binCopy
 		env.linkedBin = binCopy
 	}
@@ -219,14 +231,17 @@ func MakeEnv(config *Config, pid int) (*Env, error) {
 	return env, nil
 }
 
+//关闭的过程
 func (env *Env) Close() error {
 	if env.cmd != nil {
 		env.cmd.close()
 	}
+	//删除链接
 	if env.linkedBin != "" {
 		os.Remove(env.linkedBin)
 	}
 	var err1, err2 error
+	//inFile和outFile删除
 	if env.inFile != nil {
 		err1 = osutil.CloseMemMappedFile(env.inFile, env.in)
 	}
@@ -250,19 +265,22 @@ var rateLimit = time.NewTicker(1 * time.Second)
 // info: per-call info
 // hanged: program hanged and was killed
 // err0: failed to start the process or bug in executor itself.
+//Exec启动executor binary以执行程序p，并返回有关执行的信息：output：进程的输出；info：每一个调用的信息； hanged:被挂起和被杀掉的程序，err0:启动失败的进程或者本身就存在bug
 func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInfo, hanged bool, err0 error) {
-	// Copy-in serialized program.
+	// Copy-in serialized program.将程序序列化，并存入env.in的缓冲去中，progSize是缓冲区的大小
 	progSize, err := p.SerializeForExec(env.in)
 	if err != nil {
 		err0 = err
 		return
 	}
 	var progData []byte
-	if !env.config.UseShmem {
+	if !env.config.UseShmem { //如果没有使用共享内存，那么就吧env.in中的数据存入progData中
 		progData = env.in[:progSize]
 	}
 	// Zero out the first two words (ncmd and nsig), so that we don't have garbage there
 	// if executor crashes before writing non-garbage there.
+	//前两个字段（ncmd he nsig）没有输出，如果executor在写入非垃圾之前发生crashes，我们就不会得到垃圾。
+
 	for i := 0; i < 4; i++ {
 		env.out[i] = 0
 	}
@@ -272,7 +290,7 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 		if p.Target.OS != targets.TestOS && targets.Get(p.Target.OS, p.Target.Arch).HostFuzzer {
 			// The executor is actually ssh,
 			// starting them too frequently leads to timeouts.
-			<-rateLimit.C
+			<-rateLimit.C //1s
 		}
 		tmpDirPath := "./"
 		atomic.AddUint64(&env.StatRestarts, 1)

@@ -17,6 +17,7 @@ import (
 
 // Runner is responsible of running programs sent by the host via RPC and
 // reporting the execution results back to the host.
+// Runner负责运行由主机通过RPC发送的程序，并将执行结果报告回主机。
 type Runner struct {
 	vrf      *rpctype.RPCClient
 	target   *prog.Target

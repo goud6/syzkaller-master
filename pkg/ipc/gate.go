@@ -10,6 +10,7 @@ import (
 // Gate limits concurrency level and window to the given value.
 // Limitation of concurrency window means that if a very old activity is still
 // running it will not let new activities to start even if concurrency level is low.
+// Gate将并发级别和窗口限制为给定值。并发窗口的限制意味着，如果一个非常旧的活动仍在运行，即使并发级别较低，它也不会让新活动启动。
 type Gate struct {
 	cv      *sync.Cond
 	busy    []bool
@@ -20,6 +21,7 @@ type Gate struct {
 }
 
 // If f is not nil, it will be called after each batch of c activities.
+// 如果f不为空，会在每一批c活动之后调用
 func NewGate(c int, f func()) *Gate {
 	return &Gate{
 		cv:   sync.NewCond(new(sync.Mutex)),

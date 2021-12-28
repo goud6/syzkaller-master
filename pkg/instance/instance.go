@@ -3,6 +3,8 @@
 
 // Package instance provides helper functions for creation of temporal instances
 // used for testing of images, patches and bisection.
+// instance包创建时态实例提供辅助函数，用于创建用于测试镜像、补丁和对二分。
+// 提供用于测试补丁，镜像和二分查找的临时实例的辅助函数。
 package instance
 
 import (

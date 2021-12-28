@@ -16,6 +16,8 @@ import (
 // does not write package names before types, omits struct fields with default values,
 // omits type names where possible, etc. On the other hand, it currently does not
 // support all types (e.g. channels and maps).
+
+//序列化处理
 func Write(ww io.Writer, i interface{}) {
 	w := writer{ww}
 	v := reflect.ValueOf(i)

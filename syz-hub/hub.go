@@ -3,6 +3,7 @@
 
 package main
 
+//将多个sy-mananger连接在一起并允许他们交换程序
 import (
 	"flag"
 	"fmt"

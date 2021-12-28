@@ -2,6 +2,7 @@
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
 // Package rpctype contains types of message passed via net/rpc connections
+// 包含通过系统各部分之间的net/rpc连接传递的消息类型。
 // between various parts of the system.
 package rpctype
 
@@ -11,25 +12,29 @@ import (
 	"github.com/google/syzkaller/pkg/signal"
 )
 
+//RPC的输入
 type RPCInput struct {
-	Call   string
-	Prog   []byte
-	Signal signal.Serial
-	Cover  []uint32
+	Call   string        //调用
+	Prog   []byte        // prog流
+	Signal signal.Serial //一些反馈信号
+	Cover  []uint32      //覆盖率数组
 }
 
+//候选RPC,包含Prog,以及Minimized 和 Smash 的bool值
 type RPCCandidate struct {
-	Prog      []byte
+	Prog      []byte //Prog流
 	Minimized bool
 	Smashed   bool
 }
 
+//RPCProg 结构体，包含Prog，以及对应的Prog编号和Run编号
 type RPCProg struct {
 	Prog    []byte
 	ProgIdx int
 	RunIdx  int
 }
 
+//链接参数，连接名，连机机器信息，以及内核模块
 type ConnectArgs struct {
 	Name        string
 	MachineInfo []byte
@@ -47,6 +52,7 @@ type ConnectRes struct {
 	CoverFilterBitmap []byte
 }
 
+//校验参数包括Name，Error, 有效的调用，无效的调用，host的Feature，全局文件路径
 type CheckArgs struct {
 	Name          string
 	Error         string
@@ -56,6 +62,7 @@ type CheckArgs struct {
 	GlobFiles     map[string][]string
 }
 
+//调用id 和 无效的Reason
 type SyscallReason struct {
 	ID     int
 	Reason string

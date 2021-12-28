@@ -10,6 +10,7 @@
 // Test programs are located in sys/*/test/* files.
 package runtest
 
+// syzkaller程序端到端测试的驱动程序。
 import (
 	"bufio"
 	"bytes"

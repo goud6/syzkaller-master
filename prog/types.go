@@ -11,7 +11,7 @@ import (
 
 type Syscall struct {
 	ID          int
-	NR          uint64 // kernel syscall number
+	NR          uint64 // kernel syscall number，内核中的调用序号
 	Name        string
 	CallName    string
 	MissingArgs int // number of trailing args that should be zero-filled
@@ -24,11 +24,12 @@ type Syscall struct {
 }
 
 // SyscallAttrs represents call attributes in syzlang.
-//
+// syzlang中记录了SyscakkAttrs
 // This structure is the source of truth for the all other parts of the system.
 // pkg/compiler uses this structure to parse descriptions.
+// pkg/compile 使用该结构体解析syzlang中的描述
 // syz-sysgen uses this structure to generate code for executor.
-//
+//syz-sysgen 通过这个结构体生成可以执行的代码
 // Only bool's and uint64's are currently supported.
 //
 // See docs/syscall_descriptions_syntax.md for description of individual attributes.
@@ -677,6 +678,7 @@ type TypeCtx struct {
 	Ptr  *Type
 }
 
+// 对每个类型进行func操作
 func ForeachType(syscalls []*Syscall, f func(t Type, ctx TypeCtx)) {
 	for _, meta := range syscalls {
 		foreachTypeImpl(meta, true, f)

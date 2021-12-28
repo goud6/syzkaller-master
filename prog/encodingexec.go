@@ -63,6 +63,7 @@ var ErrExecBufferTooSmall = errors.New("encodingexec: provided buffer is too sma
 // SerializeForExec serializes program p for execution by process pid into the provided buffer.
 // Returns number of bytes written to the buffer.
 // If the provided buffer is too small for the program an error is returned.
+//将程序p序列化，以便通过进程pid执行到提供的缓冲区中，返回缓冲区的大小，如果缓冲区太小就返回error。
 func (p *Prog) SerializeForExec(buffer []byte) (int, error) {
 	p.debugValidate()
 	w := &execContext{

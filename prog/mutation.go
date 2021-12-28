@@ -38,14 +38,19 @@ func (p *Prog) Mutate(rs rand.Source, ncalls int, ct *ChoiceTable, corpus []*Pro
 		case r.oneOf(5):
 			// Not all calls have anything squashable,
 			// so this has lower priority in reality.
+			// squashAny() 对参数进行压缩，因为能够压缩的情况比较少，所以可能行最低
 			ok = ctx.squashAny()
 		case r.nOutOf(1, 100):
+			// 拼接，克隆一份系统调用拼贴到原来的中间再移除拼贴后的后半部分。
 			ok = ctx.splice()
 		case r.nOutOf(20, 31):
+			// 插入系统调用
 			ok = ctx.insertCall()
 		case r.nOutOf(10, 11):
+			// 参数变异，后续根据不同的类型调用不同的函数
 			ok = ctx.mutateArg()
 		default:
+			// 随机移除系统调用
 			ok = ctx.removeCall()
 		}
 	}

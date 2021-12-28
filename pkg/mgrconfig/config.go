@@ -3,6 +3,7 @@
 
 package mgrconfig
 
+// 管理解析配置文件
 import (
 	"encoding/json"
 )
@@ -123,11 +124,11 @@ type Config struct {
 	// Use KCOV coverage (default: true).
 	Cover bool `json:"cover"`
 	// Use coverage filter. Supported types of filter:
-	// "files": support specifying kernel source files, support regular expression.
+	// "files": support specifying kernel source files, support regular expression.  //基于文件的
 	// eg. "files": ["^net/core/tcp.c$", "^net/sctp/", "tcp"].
-	// "functions": support specifying kernel functions, support regular expression.
+	// "functions": support specifying kernel functions, support regular expression. //基于函数的
 	// eg. "functions": ["^foo$", "^bar", "baz"].
-	// "pcs": specify raw PC table files name.
+	// "pcs": specify raw PC table files name.                                //基于PC的，每个文件的每一行
 	// Each line of the file should be: "64-bit-pc:32-bit-weight\n".
 	// eg. "0xffffffff81000000:0x10\n"
 	CovFilter covFilterCfg `json:"cover_filter,omitempty"`

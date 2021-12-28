@@ -54,6 +54,7 @@ type machineInfoFunc struct {
 	fn   func(*bytes.Buffer) error
 }
 
+//包含Kernel的Name 和 Addr
 type KernelModule struct {
 	Name string
 	Addr uint64

@@ -20,6 +20,7 @@ const (
 	RecommendedCalls = 20
 	// "Recommended" max number of calls in programs.
 	// If we receive longer programs from hub/corpus we discard them.
+	// 超过40的调用序列直接丢弃
 	MaxCalls = 40
 )
 
@@ -532,21 +533,27 @@ func (r *randGen) nOutOf(n, outOf int) bool {
 	if n <= 0 || n >= outOf {
 		panic("bad probability")
 	}
+	// 返回[0, outOf)的随机整数
 	v := r.Intn(outOf)
 	return v < n
 }
 
 func (r *randGen) generateCall(s *state, p *Prog, insertionPoint int) []*Call {
+	//
 	biasCall := -1
 	if insertionPoint > 0 {
 		// Choosing the base call is based on the insertion point of the new calls sequence.
+		// 选择基本调用基于新调用序列的插入点。
 		biasCall = p.Calls[r.Intn(insertionPoint)].Meta.ID
 	}
 	idx := s.ct.choose(r.Rand, biasCall)
+	// 如果有choiceTable，choice中选择一个
+	// 根据系统调用号生成具体的系统调用类型
 	meta := r.target.Syscalls[idx]
 	return r.generateParticularCall(s, meta)
 }
 
+// generateParticularCall->generateArgs->generateArg->generateArgImpl
 func (r *randGen) generateParticularCall(s *state, meta *Syscall) (calls []*Call) {
 	if meta.Attrs.Disabled {
 		panic(fmt.Sprintf("generating disabled call %v", meta.Name))
@@ -591,6 +598,7 @@ func (target *Target) DataMmapProg() *Prog {
 	}
 }
 
+// generateParticularCall->generateArgs->generateArg->generateArgImpl
 func (r *randGen) generateArgs(s *state, fields []Field, dir Dir) ([]Arg, []*Call) {
 	var calls []*Call
 	args := make([]Arg, len(fields))
@@ -608,10 +616,13 @@ func (r *randGen) generateArgs(s *state, fields []Field, dir Dir) ([]Arg, []*Cal
 	return args, calls
 }
 
+// generateParticularCall->generateArgs->generateArg->generateArgImpl
 func (r *randGen) generateArg(s *state, typ Type, dir Dir) (arg Arg, calls []*Call) {
 	return r.generateArgImpl(s, typ, dir, false)
 }
 
+// generateParticularCall->generateArgs->generateArg->generateArgImpl，generateArgImpl
+// 生成参数本身，但是并没有生成具体的内容
 func (r *randGen) generateArgImpl(s *state, typ Type, dir Dir, ignoreSpecial bool) (arg Arg, calls []*Call) {
 	if dir == DirOut {
 		// No need to generate something interesting for output scalar arguments.
@@ -633,6 +644,7 @@ func (r *randGen) generateArgImpl(s *state, typ Type, dir Dir, ignoreSpecial boo
 	}
 
 	// Allow infinite recursion for optional pointers.
+	// 允许对可选指针进行无限递归。
 	if pt, ok := typ.(*PtrType); ok && typ.Optional() {
 		switch pt.Elem.(type) {
 		case *StructType, *ArrayType, *UnionType:
@@ -660,6 +672,7 @@ func (r *randGen) generateArgImpl(s *state, typ Type, dir Dir, ignoreSpecial boo
 	}
 
 	return typ.generate(r, s, dir)
+	// 根据类型进行不同的生成策略
 }
 
 func (a *ResourceType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
@@ -773,16 +786,21 @@ func (a *ProcType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Ca
 	return MakeConstArg(a, dir, r.rand(int(a.ValuesPerProc))), nil
 }
 
+// 对于数组类型，根据数组长度是否有指定的范围随机生成数组的长度，
+// 再根据数组的类型调用对应的generateArg函数生成每个元素的值
 func (a *ArrayType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
 	var count uint64
 	switch a.Kind {
 	case ArrayRandLen:
+		// 没有长度限制直接rand
 		count = r.randArrayLen()
 	case ArrayRangeLen:
+		// 有长度限制根据限制进行range
 		count = r.randRange(a.RangeBegin, a.RangeEnd)
 	}
 	var inner []Arg
 	for i := uint64(0); i < count; i++ {
+		// 根据数据的类型调用对应的generateArg()生成每个元素。
 		arg1, calls1 := r.generateArg(s, a.Elem, dir)
 		inner = append(inner, arg1)
 		calls = append(calls, calls1...)
@@ -803,6 +821,7 @@ func (a *UnionType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*C
 	return MakeUnionArg(a, dir, opt, index), calls
 }
 
+// 随机生成一个特殊的值或者正常的值。
 func (a *PtrType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
 	if r.oneOf(1000) {
 		index := r.rand(len(r.target.SpecialPointers))

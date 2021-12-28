@@ -1,6 +1,7 @@
 // Copyright 2015 syzkaller project authors. All rights reserved.
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
+//mananger 主要负责各项工作的启动（HTTP、RPC、dashboard等等）、调用fuzz以及repro的生成。
 package main
 
 import (
@@ -42,9 +43,9 @@ var (
 	//flagConfig 配置文件
 	flagConfig = flag.String("config", "", "configuration file")
 	//debug参数将VM所有输出打印到console帮助我们排查使用中出现的错误；
-	flagDebug  = flag.Bool("debug", false, "dump all VM output to console")
+	flagDebug = flag.Bool("debug", false, "dump all VM output to console")
 	//bench参数定期将执行的统计信息写入我们指定的文件。
-	flagBench  = flag.String("bench", "", "write execution statistics into this file periodically")
+	flagBench = flag.String("bench", "", "write execution statistics into this file periodically")
 )
 
 type Manager struct {
@@ -73,9 +74,9 @@ type Manager struct {
 	phase                 int
 	targetEnabledSyscalls map[*prog.Syscall]bool
 
-	candidates       []rpctype.RPCCandidate // untriaged inputs from corpus and hub
+	candidates       []rpctype.RPCCandidate // slice， untriaged inputs from corpus and hub,预料库和hub中没有执行的输入
 	disabledHashes   map[string]struct{}
-	corpus           map[string]rpctype.RPCInput
+	corpus           map[string]rpctype.RPCInput //map string to rpctype.RPCInput,包含Call，Prog，Signal，Cover
 	seeds            [][]byte
 	newRepros        [][]byte
 	lastMinCorpus    int
@@ -88,7 +89,9 @@ type Manager struct {
 	reproRequest   chan chan map[string]bool
 
 	// For checking that files that we are using are not changing under us.
+	//检查我们正在使用的文件有没有发生改变
 	// Maps file name to modification time.
+	// 文件名和修改时间进行映射的map
 	usedFiles map[string]time.Time
 
 	modules            []host.KernelModule
@@ -97,6 +100,7 @@ type Manager struct {
 	modulesInitialized bool
 }
 
+//阶段类型
 const (
 	// Just started, nothing done yet.
 	//仅仅开始，其他的什么也不做
@@ -120,11 +124,12 @@ const (
 
 const currentDBVersion = 4
 
+//定义Crash的结构体
 type Crash struct {
-	vmIndex int
-	hub     bool // this crash was created based on a repro from hub
-	*report.Report
-	machineInfo []byte
+	vmIndex        int    //哪台虚拟机产生的
+	hub            bool   // this crash was created based on a repro from hub，crash根据从hub中获得的repro生成。
+	*report.Report        //报告包
+	machineInfo    []byte //定义一个机器信息
 }
 
 func main() {
@@ -168,7 +173,7 @@ func RunManager(cfg *mgrconfig.Config) {
 	}
 
 	mgr := &Manager{
-		cfg:              cfg,    //
+		cfg:              cfg, //
 		vmPool:           vmPool,
 		target:           cfg.Target,
 		sysTarget:        cfg.SysTarget,
@@ -189,25 +194,25 @@ func RunManager(cfg *mgrconfig.Config) {
 		usedFiles:        make(map[string]time.Time),
 		saturatedCalls:   make(map[string]bool),
 	}
-
-	mgr.preloadCorpus()
-	mgr.initStats() // Initializes prometheus variables.
-	mgr.initHTTP()  // Creates HTTP server.
-	mgr.collectUsedFiles()
+	//初始化corpus.db Manager HTTP PRC prometheus参数 dash
+	mgr.preloadCorpus()    //提前加载语料库
+	mgr.initStats()        // Initializes prometheus variables.
+	mgr.initHTTP()         // Creates HTTP server.
+	mgr.collectUsedFiles() //collect 当前使用的文件,记录这些文件的Moditime
 
 	// Create RPC server for fuzzers.
 	mgr.serv, err = startRPCServer(mgr)
 	if err != nil {
 		log.Fatalf("failed to create rpc server: %v", err)
 	}
-
+	//Create Dashboard for fuzzer
 	if cfg.DashboardAddr != "" {
 		mgr.dash, err = dashapi.New(cfg.DashboardClient, cfg.DashboardAddr, cfg.DashboardKey)
 		if err != nil {
 			log.Fatalf("failed to create dashapi connection: %v", err)
 		}
 	}
-
+	//日志记录：启动一个线程来接收vm传过来的消息，并打印
 	go func() {
 		for lastTime := time.Now(); ; {
 			time.Sleep(10 * time.Second)
@@ -215,7 +220,7 @@ func RunManager(cfg *mgrconfig.Config) {
 			diff := now.Sub(lastTime)
 			lastTime = now
 			mgr.mu.Lock()
-			if mgr.firstConnect.IsZero() {
+			if mgr.firstConnect.IsZero() { //如果还没有连接
 				mgr.mu.Unlock()
 				continue
 			}
@@ -228,12 +233,11 @@ func RunManager(cfg *mgrconfig.Config) {
 			mgr.mu.Unlock()
 			numReproducing := atomic.LoadUint32(&mgr.numReproducing)
 			numFuzzing := atomic.LoadUint32(&mgr.numFuzzing)
-
 			log.Logf(0, "VMs %v, executed %v, cover %v, signal %v/%v, crashes %v, repro %v",
 				numFuzzing, executed, corpusCover, corpusSignal, maxSignal, crashes, numReproducing)
 		}
 	}()
-
+	//flagBench定期将分析结果写入一个文件,包括VM状态，crash数量，等信息
 	if *flagBench != "" {
 		f, err := os.OpenFile(*flagBench, os.O_WRONLY|os.O_CREATE|os.O_EXCL, osutil.DefaultFilePerm)
 		if err != nil {
@@ -264,11 +268,10 @@ func RunManager(cfg *mgrconfig.Config) {
 			}
 		}()
 	}
-
+	//开启dash
 	if mgr.dash != nil {
 		go mgr.dashboardReporter()
 	}
-
 	osutil.HandleInterrupts(vm.Shutdown)
 	if mgr.vmPool == nil {
 		log.Logf(0, "no VMs started (type=none)")
@@ -277,6 +280,7 @@ func RunManager(cfg *mgrconfig.Config) {
 		<-vm.Shutdown
 		return
 	}
+	//最后调用vmLoop
 	mgr.vmLoop()
 }
 
@@ -303,30 +307,34 @@ func (mgr *Manager) vmLoop() {
 	instancesPerRepro := 4
 	vmCount := mgr.vmPool.Count()
 	maxReproVMs := vmCount - mgr.cfg.FuzzingVMs
+	//设定最多用于Repro的VM个数
 	if instancesPerRepro > maxReproVMs && maxReproVMs > 0 {
 		instancesPerRepro = maxReproVMs
 	}
 	bootInstance := make(chan int)
 	go func() {
+		//启动instance
 		for i := 0; i < vmCount; i++ {
 			bootInstance <- i
 			time.Sleep(10 * time.Second * mgr.cfg.Timeouts.Scale)
 		}
 	}()
+	//初始化pendingRepro reproducing reproinstances
 	var instances []int
 	runDone := make(chan *RunResult, 1)
-	pendingRepro := make(map[*Crash]bool)
-	reproducing := make(map[string]bool)
+	pendingRepro := make(map[*Crash]bool) //等待Repro的Crash
+	reproducing := make(map[string]bool)  //正在进行repro的
 	reproInstances := 0
 	var reproQueue []*Crash
 	reproDone := make(chan *ReproResult, 1)
 	stopPending := false
 	shutdown := vm.Shutdown
+	//还可以启动新的instances，开始Repro
 	for shutdown != nil || len(instances) != vmCount {
 		mgr.mu.Lock()
 		phase := mgr.phase
 		mgr.mu.Unlock()
-
+		//将Crash从pending加入到reproducing中
 		for crash := range pendingRepro {
 			if reproducing[crash.Title] {
 				continue
@@ -344,17 +352,19 @@ func (mgr *Manager) vmLoop() {
 			phase, shutdown == nil, len(instances), vmCount, instances,
 			len(pendingRepro), len(reproducing), len(reproQueue))
 
-		canRepro := func() bool {
+		canRepro := func() bool { //canRepro为确定是否可以进行Repro操作
 			return phase >= phaseTriagedHub && len(reproQueue) != 0 &&
-				reproInstances+instancesPerRepro <= maxReproVMs
+				reproInstances+instancesPerRepro <= maxReproVMs //没看明白，instancesPerRepro是什么不是很了解
 		}
 
 		if shutdown != nil {
+			//可以复现并且有剩余的instance
 			for canRepro() && len(instances) >= instancesPerRepro {
 				last := len(reproQueue) - 1
 				crash := reproQueue[last]
 				reproQueue[last] = nil
 				reproQueue = reproQueue[:last]
+				//将vm分为vmIndexes和instances两个部分，Indexes进行crash的复现，instances进行实例运行
 				vmIndexes := append([]int{}, instances[len(instances)-instancesPerRepro:]...)
 				instances = instances[:len(instances)-instancesPerRepro]
 				reproInstances += instancesPerRepro
@@ -362,6 +372,7 @@ func (mgr *Manager) vmLoop() {
 				log.Logf(1, "loop: starting repro of '%v' on instances %+v", crash.Title, vmIndexes)
 				go func() {
 					features := mgr.checkResult.Features
+					//进行Repro复现
 					res, stats, err := repro.Run(crash.Output, mgr.cfg, features, mgr.reporter, mgr.vmPool, vmIndexes)
 					reproDone <- &ReproResult{
 						instances: vmIndexes,
@@ -373,13 +384,19 @@ func (mgr *Manager) vmLoop() {
 					}
 				}()
 			}
+			//没有可以复现的但是有剩余的instances
 			for !canRepro() && len(instances) != 0 {
 				last := len(instances) - 1
 				idx := instances[last]
 				instances = instances[:last]
 				log.Logf(1, "loop: starting instance %v", idx)
 				go func() {
+					//调用mgr.runInstanceInner，
+					//mgr.runInstanceInner()调用了FuzzerCmd()启动fuzz;
+					//又调用MonitorExecution()监控信息并返回Report对象
+					//返回crash信息
 					crash, err := mgr.runInstance(idx)
+					//结果处理
 					runDone <- &RunResult{idx, crash, err}
 				}()
 			}
@@ -546,6 +563,7 @@ func (mgr *Manager) loadProg(data []byte, minimized, smashed bool) bool {
 		// This program contains a disabled syscall.
 		// We won't execute it, but remember its hash so
 		// it is not deleted during minimization.
+		// 这个程序包含了disabled系统调用，我们不会执行它，但是记住它的哈希值保证最小化过程中不会删除它。
 		mgr.disabledHashes[hash.String(data)] = struct{}{}
 		return true
 	}
@@ -573,12 +591,13 @@ func checkProgram(target *prog.Target, enabled map[*prog.Syscall]bool, data []by
 	return false, false
 }
 
+//讲syz-fuzzer和syz-executor复制到VM中,调用FuzzerCmd函数通过ssh执行syz-fuzzer。
 func (mgr *Manager) runInstance(index int) (*Crash, error) {
 	mgr.checkUsedFiles()
 	instanceName := fmt.Sprintf("vm-%d", index)
-
+	// 运行虚拟机
 	rep, vmInfo, err := mgr.runInstanceInner(index, instanceName)
-
+	//关闭虚拟机
 	machineInfo := mgr.serv.shutdownInstance(instanceName)
 	if len(vmInfo) != 0 {
 		machineInfo = append(append(vmInfo, '\n'), machineInfo...)
@@ -602,17 +621,18 @@ func (mgr *Manager) runInstance(index int) (*Crash, error) {
 }
 
 func (mgr *Manager) runInstanceInner(index int, instanceName string) (*report.Report, []byte, error) {
+	// 创建
 	inst, err := mgr.vmPool.Create(index)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create instance: %v", err)
 	}
 	defer inst.Close()
-
+	// forward
 	fwdAddr, err := inst.Forward(mgr.serv.port)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to setup port forwarding: %v", err)
 	}
-
+	// 复制fuzzer二进制文件
 	fuzzerBin, err := inst.Copy(mgr.cfg.FuzzerBin)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to copy binary: %v", err)
@@ -622,12 +642,12 @@ func (mgr *Manager) runInstanceInner(index int, instanceName string) (*report.Re
 	// so no need to copy it.
 	executorBin := mgr.sysTarget.ExecutorBin
 	if executorBin == "" {
+		//没有executor的时候再将executorBin复制进VM
 		executorBin, err = inst.Copy(mgr.cfg.ExecutorBin)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to copy binary: %v", err)
 		}
 	}
-
 	fuzzerV := 0
 	procs := mgr.cfg.Procs
 	if *flagDebug {
@@ -636,19 +656,22 @@ func (mgr *Manager) runInstanceInner(index int, instanceName string) (*report.Re
 	}
 
 	// Run the fuzzer binary.
+	// 启动fuzzer二进制文件
 	start := time.Now()
 	atomic.AddUint32(&mgr.numFuzzing, 1)
 	defer atomic.AddUint32(&mgr.numFuzzing, ^uint32(0))
-
+	// 通过cmd命令执行
 	cmd := instance.FuzzerCmd(fuzzerBin, executorBin, instanceName,
 		mgr.cfg.TargetOS, mgr.cfg.TargetArch, fwdAddr, mgr.cfg.Sandbox, procs, fuzzerV,
 		mgr.cfg.Cover, *flagDebug, false, false, true, mgr.cfg.Timeouts.Slowdown)
+	// 传输cmd, outc 和 errc 为两个chan byte[] outc接收的是cmd和内核控制台组合输出，errc接受命令等待的返回错误或超时错误。
 	outc, errc, err := inst.Run(mgr.cfg.Timeouts.VMRunningTime, mgr.vmStop, cmd)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to run fuzzer: %v", err)
 	}
 
 	var vmInfo []byte
+	// 同时MonitorExecution函数监控虚拟机的执行，检测输出中的内核oops信息、丢失连接、挂起等等。
 	rep := inst.MonitorExecution(outc, errc, mgr.reporter, vm.ExitTimeout)
 	if rep == nil {
 		// This is the only "OK" outcome.
@@ -972,20 +995,25 @@ func (mgr *Manager) addNewCandidates(candidates []rpctype.RPCCandidate) {
 	}
 }
 
+//最小化语料库
 func (mgr *Manager) minimizeCorpus() {
+	// Init 状态退出，或者语料库大小过小，直接返回
 	if mgr.phase < phaseLoadedCorpus || len(mgr.corpus) <= mgr.lastMinCorpus*103/100 {
 		return
 	}
+	//创建signal.context的slice，将语料库中的Signal 加入
 	inputs := make([]signal.Context, 0, len(mgr.corpus))
-	for _, inp := range mgr.corpus {
+	for _, inp := range mgr.corpus { //corpus中存放的是map[string]RPCInput
 		inputs = append(inputs, signal.Context{
 			Signal:  inp.Signal.Deserialize(),
-			Context: inp,
+			Context: inp, //存放的是一个具体的PRCInput
 		})
 	}
+	//创建新的语料库
 	newCorpus := make(map[string]rpctype.RPCInput)
 	// Note: inputs are unsorted (based on map iteration).
-	// This gives some intentional non-determinism during minimization.
+	// This gives some intentional non-determinism during minimization. 故意产生非确定性
+	// 返回的signal有elemType相同的，取其中prio最高的
 	for _, ctx := range signal.Minimize(inputs) {
 		inp := ctx.(rpctype.RPCInput)
 		newCorpus[hash.String(inp.Prog)] = inp
@@ -994,20 +1022,27 @@ func (mgr *Manager) minimizeCorpus() {
 	mgr.corpus = newCorpus
 	mgr.lastMinCorpus = len(newCorpus)
 
+	//corpus explosion
+	//为了防止出现corpus explosion，需要统计call的cov和count情况
+
 	// From time to time we get corpus explosion due to different reason:
 	// generic bugs, per-OS bugs, problems with fallback coverage, kcov bugs, etc.
 	// This has bad effect on the instance and especially on instances
 	// connected via hub. Do some per-syscall sanity checking to prevent this.
+	// 由于一些原因，我们不时会遇到语料库爆炸：比如generic bug等，这会对实例产生不良影响，
+	// 尤其是对通过hub 连接的实例。对每个系统调用执行一些健全性检查以防止出现这种情况。
+	// 对于每个call和信息
 	for call, info := range mgr.collectSyscallInfoUnlocked() {
 		if mgr.cfg.Cover {
 			// If we have less than 1K inputs per this call,
 			// accept all new inputs unconditionally.
+			// 如果语料库大小小于1000 继续，超过3000，不再接收， 1000 到 3000之间并且
 			if info.count < 1000 {
 				continue
 			}
 			// If we have more than 3K already, don't accept any more.
 			// Between 1K and 3K look at amount of coverage we are getting from these programs.
-			// Empirically, real coverage for the most saturated syscalls is ~30-60
+			// Empirically, real coverage for the most saturated syscalls is ~30-60   //最饱和的系统调用的实际覆盖率约为30-60
 			// per program (even when we have a thousand of them). For explosion
 			// case coverage tend to be much lower (~0.3-5 per program).
 			if info.count < 3000 && len(info.cov)/info.count >= 10 {
@@ -1028,6 +1063,7 @@ func (mgr *Manager) minimizeCorpus() {
 	}
 
 	// Don't minimize persistent corpus until fuzzers have triaged all inputs from it.
+	// 写回db.filename
 	if mgr.phase < phaseTriagedCorpus {
 		return
 	}
@@ -1052,30 +1088,34 @@ func (mgr *Manager) collectSyscallInfo() map[string]*CallCov {
 	return mgr.collectSyscallInfoUnlocked()
 }
 
+//收集系统调用的信息，返回一个string 到 CallCov 的map
 func (mgr *Manager) collectSyscallInfoUnlocked() map[string]*CallCov {
 	if mgr.checkResult == nil {
 		return nil
 	}
 	calls := make(map[string]*CallCov)
+	//获取所有有效的调用，通过checkResult中的来构建target的Syscall
 	for _, call := range mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox] {
 		calls[mgr.target.Syscalls[call].Name] = new(CallCov)
 	}
+	//如果还有语料库中没有的，加上
 	for _, inp := range mgr.corpus {
 		if calls[inp.Call] == nil {
 			calls[inp.Call] = new(CallCov)
 		}
 		cc := calls[inp.Call]
-		cc.count++
+		cc.count++ //计数加1
 		cc.cov.Merge(inp.Cover)
 	}
 	return calls
 }
 
+// RPC调用connct函数
 func (mgr *Manager) fuzzerConnect(modules []host.KernelModule) (
 	[]rpctype.RPCInput, BugFrames, map[uint32]uint32, []byte, error) {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
-
+	//最小语料库
 	mgr.minimizeCorpus()
 	corpus := make([]rpctype.RPCInput, 0, len(mgr.corpus))
 	for _, inp := range mgr.corpus {
@@ -1103,16 +1143,19 @@ func (mgr *Manager) fuzzerConnect(modules []host.KernelModule) (
 	return corpus, frames, mgr.coverFilter, mgr.coverFilterBitmap, nil
 }
 
+//RPC调用Check函数
 func (mgr *Manager) machineChecked(a *rpctype.CheckArgs, enabledSyscalls map[*prog.Syscall]bool) {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 	mgr.checkResult = a
 	mgr.targetEnabledSyscalls = enabledSyscalls
 	mgr.target.UpdateGlobs(a.GlobFiles)
+	//加载语料库
 	mgr.loadCorpus()
 	mgr.firstConnect = time.Now()
 }
 
+//RPC调用newInput函数
 func (mgr *Manager) newInput(inp rpctype.RPCInput, sign signal.Signal) bool {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
@@ -1183,7 +1226,7 @@ func (mgr *Manager) collectUsedFiles() {
 		if err != nil {
 			log.Fatalf("failed to stat %v: %v", f, err)
 		}
-		mgr.usedFiles[f] = stat.ModTime()
+		mgr.usedFiles[f] = stat.ModTime() //xiugai time
 	}
 	cfg := mgr.cfg
 	addUsedFile(cfg.FuzzerBin)

@@ -3,6 +3,7 @@
 
 package mgrconfig
 
+// 管理解析配置文件
 import (
 	"fmt"
 	"io/ioutil"
@@ -24,12 +25,12 @@ type Derived struct {
 	Target    *prog.Target
 	SysTarget *targets.Target
 
-	// Parsed Target:
+	// Parsed Target:   解析目标
 	TargetOS     string
 	TargetArch   string
 	TargetVMArch string
 
-	// Full paths to binaries we are going to use:
+	// Full paths to binaries we are going to use:  //完整的路径
 	FuzzerBin   string
 	ExecprogBin string
 	ExecutorBin string

@@ -1,10 +1,10 @@
 // Copyright 2017 syzkaller project authors. All rights reserved.
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
-// Package db implements a simple key-value database.
-// The database is cached in memory and mirrored on disk.
-// It is used to store corpus in syz-manager and syz-hub.
-// The database strives to minimize number of disk accesses
+// Package db implements a simple key-value database.  一个简单的非关系数据库
+// The database is cached in memory and mirrored on disk.  数据库缓存在内存中，并映射到磁盘上
+// It is used to store corpus in syz-manager and syz-hub.       用来存储syz-manager和syz-hub的语料库
+// The database strives to minimize number of disk accesses       这个数据库努力减少硬盘的访问
 // as they can be slow in virtualized environments (GCE).
 package db
 

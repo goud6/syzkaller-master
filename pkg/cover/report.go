@@ -13,6 +13,7 @@ import (
 	"github.com/google/syzkaller/sys/targets"
 )
 
+//
 type ReportGenerator struct {
 	target    *targets.Target
 	srcDir    string

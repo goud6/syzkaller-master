@@ -55,6 +55,7 @@ type BugFrames struct {
 }
 
 // RPCManagerView restricts interface between RPCServer and Manager.
+// RPCManagerView限制了RPCServer和Manager之间的连接
 type RPCManagerView interface {
 	fuzzerConnect([]host.KernelModule) (
 		[]rpctype.RPCInput, BugFrames, map[uint32]uint32, []byte, error)
@@ -86,10 +87,11 @@ func startRPCServer(mgr *Manager) (*RPCServer, error) {
 	return serv, nil
 }
 
+//Connect函数 ,不修改架构的化不用考虑这部分代码
 func (serv *RPCServer) Connect(a *rpctype.ConnectArgs, r *rpctype.ConnectRes) error {
 	log.Logf(1, "fuzzer %v connected", a.Name)
 	serv.stats.vmRestarts.inc()
-
+	//manager调用fuzzerConnect
 	corpus, bugFrames, coverFilter, coverBitmap, err := serv.mgr.fuzzerConnect(a.Modules)
 	if err != nil {
 		return err
@@ -125,35 +127,50 @@ func (serv *RPCServer) Connect(a *rpctype.ConnectArgs, r *rpctype.ConnectRes) er
 	return nil
 }
 
+//翻转语料库
 func (serv *RPCServer) rotateCorpus(f *Fuzzer, corpus []rpctype.RPCInput) *rpctype.CheckArgs {
 	// Fuzzing tends to stuck in some local optimum and then it fails to cover
 	// other state space points since code coverage is only a very approximate
 	// measure of logic coverage. To overcome this we introduce some variation
 	// into the process which should cause steady corpus rotation over time
 	// (the same coverage is achieved in different ways).
-	//
+	//由于代码覆盖率只是逻辑覆盖率的一个非常近似的度量，模糊化倾向于陷入局部最优，然后无法覆盖其他状态空间点。
+	//为了克服这一点，我们在这个过程中引入了一些变化，这些变化会导致语料库随着时间的推移而稳定地旋转（相同的覆盖范围是通过不同的方式实现的）。
+
 	// First, we select a subset of all syscalls for each VM run (result.EnabledCalls).
 	// This serves 2 goals: (1) target fuzzer at a particular area of state space,
 	// (2) disable syscalls that cause frequent crashes at least in some runs
 	// to allow it to do actual fuzzing.
-	//
+
+	//首先，我们为每个VM运行选择所有系统调用的子集（result.EnabledCalls）。
+	//这有两个目标：（1）将fuzzer定位在状态空间的特定区域，（2）禁用至少在某些运行中会导致频繁崩溃的系统调用，以允许它执行实际的fuzzing。
+
 	// Then, we remove programs that contain disabled syscalls from corpus
 	// that will be sent to the VM (f.inputs). We also remove 10% of remaining
 	// programs at random to allow to rediscover different variations of these programs.
-	//
+
+	//然后，我们从将被发送到VM的语料库中删除包含禁用系统调用的程序（f.inputs）。我们还随机删除了10%的剩余程序，以便重新发现这些程序的不同变体。
+
 	// Then, we drop signal provided by the removed programs and also 10%
 	// of the remaining signal at random (f.newMaxSignal). This again allows
 	// rediscovery of this signal by different programs.
-	//
+
+	//然后，我们随机丢弃被删除程序提供的信号以及剩余信号的10%（f.newMaxSignal）。这同样允许通过不同的程序重新发现该信号。
+
 	// Finally, we adjust criteria for accepting new programs from this VM (f.rotatedSignal).
 	// This allows to accept rediscovered varied programs even if they don't
 	// increase overall coverage. As the result we have multiple programs
 	// providing the same duplicate coverage, these are removed during periodic
-	// corpus minimization process. The minimization process is specifically
-	// non-deterministic to allow the corpus rotation.
-	//
+	// corpus minimization process.
+
+	//最后，我们调整了从这个VM（f.rotatedSignal）接受新程序的标准。
+	//这允许接受重新发现的各种程序，即使它们不增加总体覆盖率。
+	//因此，我们有多个提供相同重复覆盖的程序，这些程序在周期性语料库最小化过程中被删除。最小化过程特别不确定，以允许语料库旋转。
+
 	// Note: at no point we drop anything globally and permanently.
 	// Everything we remove during this process is temporal and specific to a single VM.
+
+	//注意：在任何时候，我们都不会在全局范围内永久性地丢弃任何东西。在此过程中，我们删除的所有内容都是暂时的，并且特定于单个VM。
 	calls := serv.rotator.Select()
 
 	var callIDs []int
@@ -162,7 +179,7 @@ func (serv *RPCServer) rotateCorpus(f *Fuzzer, corpus []rpctype.RPCInput) *rpcty
 		callNames[call.Name] = true
 		callIDs = append(callIDs, call.ID)
 	}
-
+	//f.input为准备禁用的调用程序，f.newMaxSignal为随机选择被丢弃的信号
 	f.inputs, f.newMaxSignal = serv.selectInputs(callNames, corpus, serv.maxSignal)
 	// Remove the corresponding signal from rotatedSignal which will
 	// be used to accept new inputs from this manager.
@@ -201,6 +218,7 @@ func (serv *RPCServer) selectInputs(enabled map[string]bool, inputs0 []rpctype.R
 	return inputs, signal
 }
 
+//RPC调用Check函数
 func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *int) error {
 	serv.mu.Lock()
 	defer serv.mu.Unlock()
@@ -239,6 +257,7 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *int) error {
 	for _, feat := range a.Features.Supported() {
 		log.Logf(0, "%-24v: %v", feat.Name, feat.Reason)
 	}
+	//检查machine时加载语料库
 	serv.mgr.machineChecked(a, serv.targetEnabledSyscalls)
 	a.DisabledCalls = nil
 	serv.checkResult = a
@@ -246,6 +265,7 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *int) error {
 	return nil
 }
 
+//RPC调用NewInput函数
 func (serv *RPCServer) NewInput(a *rpctype.NewInputArgs, r *int) error {
 	inputSignal := a.Signal.Deserialize()
 	log.Logf(4, "new input from %v for syscall %v (signal=%v, cover=%v)",
@@ -312,6 +332,7 @@ func (serv *RPCServer) NewInput(a *rpctype.NewInputArgs, r *int) error {
 	return nil
 }
 
+// fuzzer通过RPC调用Poll函数
 func (serv *RPCServer) Poll(a *rpctype.PollArgs, r *rpctype.PollRes) error {
 	serv.stats.mergeNamed(a.Stats)
 
@@ -342,6 +363,7 @@ func (serv *RPCServer) Poll(a *rpctype.PollArgs, r *rpctype.PollRes) error {
 	}
 	r.MaxSignal = f.newMaxSignal.Split(2000).Serialize()
 	if a.NeedCandidates {
+		//调用condidateBatch函数获得mgr.candidates，将它们加入到fuzzer的workQueue中。
 		r.Candidates = serv.mgr.candidateBatch(serv.batchSize)
 	}
 	if len(r.Candidates) == 0 {

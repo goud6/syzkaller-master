@@ -24,9 +24,12 @@ import (
 // Note: the current implementation is very basic, there is no theory behind any
 // constants.
 
+//没有理论支撑，很基础的实现，因此这里也是改进较多的点
 func (target *Target) CalculatePriorities(corpus []*Prog) [][]int32 {
+	//静态
 	static := target.calcStaticPriorities()
 	if len(corpus) != 0 {
+		//动态
 		dynamic := target.calcDynamicPrio(corpus)
 		for i, prios := range dynamic {
 			dst := static[i]
@@ -39,11 +42,13 @@ func (target *Target) CalculatePriorities(corpus []*Prog) [][]int32 {
 }
 
 func (target *Target) calcStaticPriorities() [][]int32 {
-	uses := target.calcResourceUsage()
+	uses := target.calcResourceUsage() //获得调用的资源使用表map[string]map[int]weights
+	//创建二维关系表
 	prios := make([][]int32, len(target.Syscalls))
 	for i := range prios {
 		prios[i] = make([]int32, len(target.Syscalls))
 	}
+	//遍历use
 	for _, weights := range uses {
 		for _, w0 := range weights {
 			for _, w1 := range weights {
@@ -53,12 +58,14 @@ func (target *Target) calcStaticPriorities() [][]int32 {
 				}
 				// The static priority is assigned based on the direction of arguments. A higher priority will be
 				// assigned when c0 is a call that produces a resource and c1 a call that uses that resource.
+				// 设置了资源的赋值方向，read 或 weight
 				prios[w0.call][w1.call] += w0.inout*w1.in*3/2 + w0.inout*w1.inout
 			}
 		}
 	}
 	normalizePrio(prios)
 	// The value assigned for self-priority (call wrt itself) have to be high, but not too high.
+	// 把自相关设置的高一点，但不要太高
 	for c0, pp := range prios {
 		pp[c0] = prioHigh * 9 / 10
 	}
@@ -66,9 +73,10 @@ func (target *Target) calcStaticPriorities() [][]int32 {
 }
 
 func (target *Target) calcResourceUsage() map[string]map[int]weights {
-	uses := make(map[string]map[int]weights)
+	uses := make(map[string]map[int]weights) //key是string,代表一种资源，value 是一个map,call id to weights
 	ForeachType(target.Syscalls, func(t Type, ctx TypeCtx) {
 		c := ctx.Meta
+		// noteUsage中，同一种资源同一个系统调用只会记录一个最大值
 		switch a := t.(type) {
 		case *ResourceType:
 			if target.AuxResources[a.Desc.Name] {
@@ -130,8 +138,8 @@ func noteUsage(uses map[string]map[int]weights, c *Syscall, weight int32, dir Di
 	if uses[id] == nil {
 		uses[id] = make(map[int]weights)
 	}
-	callWeight := uses[id][c.ID]
-	callWeight.call = c.ID
+	callWeight := uses[id][c.ID] //找到c.ID的权重
+	callWeight.call = c.ID       //权重中嵌套了系统调用的ID
 	if dir != DirOut {
 		if weight > uses[id][c.ID].in {
 			callWeight.in = weight
@@ -150,6 +158,7 @@ func (target *Target) calcDynamicPrio(corpus []*Prog) [][]int32 {
 	}
 	for _, p := range corpus {
 		for idx0, c0 := range p.Calls {
+			// 只要c1在c0的后面，权重就加1
 			for _, c1 := range p.Calls[idx0+1:] {
 				prios[c0.Meta.ID][c1.Meta.ID]++
 			}
@@ -188,12 +197,15 @@ type ChoiceTable struct {
 }
 
 func (target *Target) BuildChoiceTable(corpus []*Prog, enabled map[*Syscall]bool) *ChoiceTable {
+	// enabled就是在架构中可以使用的syscall
+	//如果enabled == nil，把target.Syscalls依次赋值给enabled，并置为true
 	if enabled == nil {
 		enabled = make(map[*Syscall]bool)
 		for _, c := range target.Syscalls {
 			enabled[c] = true
 		}
 	}
+	//删除不可用的
 	for call := range enabled {
 		if call.Attrs.Disabled {
 			delete(enabled, call)
@@ -203,12 +215,15 @@ func (target *Target) BuildChoiceTable(corpus []*Prog, enabled map[*Syscall]bool
 	for c := range enabled {
 		enabledCalls = append(enabledCalls, c)
 	}
+	//加入到enabledCalls中
 	if len(enabledCalls) == 0 {
 		panic("no syscalls enabled")
 	}
+	// 按照ID大小及逆行排序
 	sort.Slice(enabledCalls, func(i, j int) bool {
 		return enabledCalls[i].ID < enabledCalls[j].ID
 	})
+	//对corpus进行检查，查看是否有不可用的syscall
 	for _, p := range corpus {
 		for _, call := range p.Calls {
 			if !enabled[call.Meta] {
@@ -217,6 +232,7 @@ func (target *Target) BuildChoiceTable(corpus []*Prog, enabled map[*Syscall]bool
 			}
 		}
 	}
+	//计算prios,并保存到fuzzer.choiceTable
 	prios := target.CalculatePriorities(corpus)
 	run := make([][]int32, len(target.Syscalls))
 	for i := range run {
@@ -241,12 +257,13 @@ func (ct *ChoiceTable) Enabled(call int) bool {
 
 func (ct *ChoiceTable) choose(r *rand.Rand, bias int) int {
 	if bias < 0 {
-		bias = ct.calls[r.Intn(len(ct.calls))].ID
+		bias = ct.calls[r.Intn(len(ct.calls))].ID //最大值
 	}
 	if !ct.Enabled(bias) {
 		fmt.Printf("bias to disabled syscall %v\n", ct.target.Syscalls[bias].Name)
 		panic("disabled syscall")
 	}
+	// 二分找到第一个满足的
 	run := ct.runs[bias]
 	x := int32(r.Intn(int(run[len(run)-1])) + 1)
 	res := sort.Search(len(run), func(i int) bool {

@@ -97,6 +97,7 @@ func LongPipe() (io.ReadCloser, io.WriteCloser, error) {
 }
 
 // CreateMemMappedFile creates a temp file with the requested size and maps it into memory.
+//创建一个临时文件，并映射到内存中，返回值分别为：f, mem:一个byte的slice, err
 func CreateMemMappedFile(size int) (f *os.File, mem []byte, err error) {
 	f, err = ioutil.TempFile("./", "syzkaller-shm")
 	if err != nil {

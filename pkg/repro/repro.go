@@ -3,6 +3,8 @@
 
 package repro
 
+// 对crash进行复现并进行相关的处理。
+
 import (
 	"bytes"
 	"fmt"
@@ -63,6 +65,7 @@ type instance struct {
 	executorBin string
 }
 
+//进行repro操作
 func Run(crashLog []byte, cfg *mgrconfig.Config, features *host.Features, reporter *report.Reporter,
 	vmPool *vm.Pool, vmIndexes []int) (*Result, *Stats, error) {
 	if len(vmIndexes) == 0 {
@@ -74,11 +77,14 @@ func Run(crashLog []byte, cfg *mgrconfig.Config, features *host.Features, report
 	}
 	crashStart := len(crashLog)
 	crashTitle, crashType := "", report.Unknown
+	//返回[]*LogEntry  LogEntry 描述了一个程序执行的日志
 	if rep := reporter.Parse(crashLog); rep != nil {
 		crashStart = rep.StartPos
 		crashTitle = rep.Title
 		crashType = rep.Type
 	}
+	//配置各种参数
+	//设置终止时间
 	testTimeouts := []time.Duration{
 		3 * cfg.Timeouts.Program, // to catch simpler crashes (i.e. no races and no hangs)
 		20 * cfg.Timeouts.Program,
@@ -113,6 +119,7 @@ func Run(crashLog []byte, cfg *mgrconfig.Config, features *host.Features, report
 	ctx.reproLogf(0, "%v programs, %v VMs, timeouts %v", len(entries), len(vmIndexes), testTimeouts)
 	var wg sync.WaitGroup
 	wg.Add(len(vmIndexes))
+	//启动VMIndex个Instance
 	for _, vmIndex := range vmIndexes {
 		ctx.bootRequests <- vmIndex
 		go func() {
@@ -153,7 +160,7 @@ func Run(crashLog []byte, cfg *mgrconfig.Config, features *host.Features, report
 			inst.Close()
 		}
 	}()
-
+	//开始repro操作
 	res, err := ctx.repro(entries, crashStart)
 	if err != nil {
 		return nil, nil, err
@@ -162,9 +169,11 @@ func Run(crashLog []byte, cfg *mgrconfig.Config, features *host.Features, report
 		ctx.reproLogf(3, "repro crashed as (corrupted=%v):\n%s",
 			ctx.report.Corrupted, ctx.report.Report)
 		// Try to rerun the repro if the report is corrupted.
+		//如果程序中断，尝试重新运行，已损坏指示报告是否以其他方式被截断或损坏。
 		for attempts := 0; ctx.report.Corrupted && attempts < 3; attempts++ {
 			ctx.reproLogf(3, "report is corrupted, running repro again")
 			if res.CRepro {
+				//测试
 				_, err = ctx.testCProg(res.Prog, res.Duration, res.Opts)
 			} else {
 				_, err = ctx.testProg(res.Prog, res.Duration, res.Opts)
@@ -238,19 +247,21 @@ func (ctx *context) initInstance(cfg *mgrconfig.Config, vmPool *vm.Pool, vmIndex
 }
 
 func (ctx *context) repro(entries []*prog.LogEntry, crashStart int) (*Result, error) {
-	// Cut programs that were executed after crash.
+	// Cut programs that were executed after crash. crash后的程序切除掉
 	for i, ent := range entries {
 		if ent.Start > crashStart {
 			entries = entries[:i]
 			break
 		}
 	}
-
 	reproStart := time.Now()
 	defer func() {
 		ctx.reproLogf(3, "reproducing took %s", time.Since(reproStart))
 	}()
 
+	//提取触发crash的程序
+
+	//repro开始
 	res, err := ctx.extractProg(entries)
 	if err != nil {
 		return nil, err
@@ -263,18 +274,22 @@ func (ctx *context) repro(entries []*prog.LogEntry, crashStart int) (*Result, er
 			res.Opts.Repro = false
 		}
 	}()
+	//对触发的程序进行最小化操作
 	res, err = ctx.minimizeProg(res)
 	if err != nil {
 		return nil, err
 	}
 
 	// Try extracting C repro without simplifying options first.
+	//最小化后提取提取C程序
 	res, err = ctx.extractC(res)
 	if err != nil {
 		return nil, err
 	}
 
 	// Simplify options and try extracting C repro.
+	// 简化选项并继续提取C程序,在repro.go中定义了progSimplifies数组作为简化规则，依次使用每一条规则后，如果有效（crash还能被触发），
+	//再调用extractC(res)尝试提取C repro
 	if !res.CRepro {
 		res, err = ctx.simplifyProg(res)
 		if err != nil {
@@ -282,7 +297,7 @@ func (ctx *context) repro(entries []*prog.LogEntry, crashStart int) (*Result, er
 		}
 	}
 
-	// Simplify C related options.
+	// Simplify C related options，规则跟上面的不同，使用了cSimplifies数组
 	if res.CRepro {
 		res, err = ctx.simplifyC(res)
 		if err != nil {
@@ -293,6 +308,7 @@ func (ctx *context) repro(entries []*prog.LogEntry, crashStart int) (*Result, er
 	return res, nil
 }
 
+//提取触发crash的程序
 func (ctx *context) extractProg(entries []*prog.LogEntry) (*Result, error) {
 	ctx.reproLogf(2, "extracting reproducer from %v programs", len(entries))
 	start := time.Now()
@@ -301,6 +317,9 @@ func (ctx *context) extractProg(entries []*prog.LogEntry) (*Result, error) {
 	}()
 
 	// Extract last program on every proc.
+	//返回值是能触发crash的单个program或者能触发crash的programs的组合
+
+	//extractProgBisect()的实现：先调用bisectProgs()进行分组，看哪一组可以触发crash。
 	procs := make(map[int]int)
 	for i, ent := range entries {
 		procs[ent.Proc] = i
@@ -310,13 +329,19 @@ func (ctx *context) extractProg(entries []*prog.LogEntry) (*Result, error) {
 		indices = append(indices, idx)
 	}
 	sort.Ints(indices)
+
+	//首先，在所有program(用entries数组表示)提取出每个proc所执行的最后一个program，
+	//并按执行先后倒序排列，存放到lastEntries数组中。
 	var lastEntries []*prog.LogEntry
 	for i := len(indices) - 1; i >= 0; i-- {
 		lastEntries = append(lastEntries, entries[indices[i]])
 	}
+
+	//其次，调用extractProgSingle()倒序执行每一个program，如果res不为空，返回
 	for _, timeout := range ctx.testTimeouts {
 		// Execute each program separately to detect simple crashes caused by a single program.
 		// Programs are executed in reverse order, usually the last program is the guilty one.
+		//
 		res, err := ctx.extractProgSingle(lastEntries, timeout)
 		if err != nil {
 			return nil, err
@@ -332,6 +357,8 @@ func (ctx *context) extractProg(entries []*prog.LogEntry) (*Result, error) {
 		}
 
 		// Execute all programs and bisect the log to find multiple guilty programs.
+		//如果单个程序无法复现，采用二分的方法找到那些触发crash的程序
+		//最后（即单个程序不会引起crash），调用extractProgBisect()测试哪几个program一起触发了crash
 		res, err = ctx.extractProgBisect(entries, timeout)
 		if err != nil {
 			return nil, err
@@ -422,13 +449,14 @@ func (ctx *context) extractProgBisect(entries []*prog.LogEntry, baseDuration tim
 }
 
 // Minimize calls and arguments.
+// 最小化序列和参数
 func (ctx *context) minimizeProg(res *Result) (*Result, error) {
 	ctx.reproLogf(2, "minimizing guilty program")
 	start := time.Now()
 	defer func() {
 		ctx.stats.MinimizeProgTime = time.Since(start)
 	}()
-
+	//通过调用Minimize来实现
 	res.Prog, _ = prog.Minimize(res.Prog, -1, true,
 		func(p1 *prog.Prog, callIndex int) bool {
 			crashed, err := ctx.testProg(p1, res.Duration, res.Opts)
@@ -438,12 +466,13 @@ func (ctx *context) minimizeProg(res *Result) (*Result, error) {
 			}
 			return crashed
 		})
-
 	return res, nil
 }
 
 // Simplify repro options (threaded, collide, sandbox, etc).
+// 简化C程序，简化线程、并发、沙箱等。
 func (ctx *context) simplifyProg(res *Result) (*Result, error) {
+	//progSimplifies数组作为简化规则，依次使用每一条规则后
 	ctx.reproLogf(2, "simplifying guilty program options")
 	start := time.Now()
 	defer func() {
@@ -451,6 +480,7 @@ func (ctx *context) simplifyProg(res *Result) (*Result, error) {
 	}()
 
 	// Do further simplifications.
+	// 使用progSimplifies数组进行简化
 	for _, simplify := range progSimplifies {
 		opts := res.Opts
 		if !simplify(&opts) || !checkOpts(&opts, ctx.timeouts, res.Duration) {
@@ -465,6 +495,7 @@ func (ctx *context) simplifyProg(res *Result) (*Result, error) {
 		}
 		res.Opts = opts
 		// Simplification successful, try extracting C repro.
+		//如果简化成功了，继续提取C 程序
 		res, err = ctx.extractC(res)
 		if err != nil {
 			return nil, err
@@ -478,29 +509,32 @@ func (ctx *context) simplifyProg(res *Result) (*Result, error) {
 }
 
 // Try triggering crash with a C reproducer.
+//尝试提取C程序
 func (ctx *context) extractC(res *Result) (*Result, error) {
 	ctx.reproLogf(2, "extracting C reproducer")
 	start := time.Now()
 	defer func() {
 		ctx.stats.ExtractCTime = time.Since(start)
 	}()
-
+	//调用testCProg提取C程序
 	crashed, err := ctx.testCProg(res.Prog, res.Duration, res.Opts)
 	if err != nil {
 		return nil, err
 	}
-	res.CRepro = crashed
+	res.CRepro = crashed //bool ，是否可以复现
 	return res, nil
 }
 
 // Try to simplify the C reproducer.
+// 对C程序进行简化
 func (ctx *context) simplifyC(res *Result) (*Result, error) {
+
 	ctx.reproLogf(2, "simplifying C reproducer")
 	start := time.Now()
 	defer func() {
 		ctx.stats.SimplifyCTime = time.Since(start)
 	}()
-
+	//使用cSimplifies进行简化
 	for _, simplify := range cSimplifies {
 		opts := res.Opts
 		if !simplify(&opts) || !checkOpts(&opts, ctx.timeouts, res.Duration) {
@@ -589,10 +623,12 @@ func (ctx *context) testProgs(entries []*prog.LogEntry, duration time.Duration, 
 }
 
 func (ctx *context) testCProg(p *prog.Prog, duration time.Duration, opts csource.Options) (crashed bool, err error) {
+	//通多调用Write函数生成C代码
 	src, err := csource.Write(p, opts)
 	if err != nil {
 		return false, err
 	}
+	//build函数将src编译成可执行文件
 	bin, err := csource.BuildNoWarn(p.Target, src)
 	if err != nil {
 		return false, err
